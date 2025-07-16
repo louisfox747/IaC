@@ -1,0 +1,12 @@
+---
+- name: Ping Google and get response
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Ping www.google.com
+      shell: ping -n 4 www.google.com
+      register: ping_result
+    
+    - name: Display ping results
+      debug:
+        msg: "{{ ping_result.stdout }}"
