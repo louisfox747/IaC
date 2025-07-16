@@ -1,9 +1,50 @@
 #!/usr/bin/env python
 # Windows-compatible Python script for scanning Kubernetes pods
 
-import sys, traceback
-from kubernetes import client, config
-from kubernetes.client.rest import ApiException
+import sys
+import traceback
+import subprocess
+import os
+
+# Check and install dependencies
+def check_and_install_dependencies():
+    """Check if kubernetes module is available and install if missing"""
+    try:
+        import kubernetes
+        print("✓ Kubernetes module is available")
+        return True
+    except ImportError:
+        print("❌ Kubernetes module not found. Attempting to install...")
+        try:
+            # Try to install kubernetes module
+            subprocess.check_call([sys.executable, "-m", "pip", "install", "kubernetes"])
+            print("✓ Kubernetes module installed successfully")
+            return True
+        except subprocess.CalledProcessError:
+            print("❌ Failed to install kubernetes module")
+            print("Please install it manually with: pip install kubernetes")
+            return False
+        except Exception as e:
+            print(f"❌ Error during installation: {e}")
+            return False
+
+# Import kubernetes modules after checking dependencies
+if not check_and_install_dependencies():
+    print("\n🔧 Manual installation instructions:")
+    print("1. Install the kubernetes Python package:")
+    print("   pip install kubernetes")
+    print("2. Or install from requirements.txt if available:")
+    print("   pip install -r requirements.txt")
+    print("3. For system-wide installation:")
+    print("   sudo pip install kubernetes")
+    sys.exit(1)
+
+try:
+    from kubernetes import client, config
+    from kubernetes.client.rest import ApiException
+except ImportError as e:
+    print(f"❌ Still unable to import kubernetes module: {e}")
+    sys.exit(1)
 
 
 def main():
