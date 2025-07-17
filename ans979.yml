@@ -9,6 +9,8 @@
       - "c:\\kube\\config\\default.yaml"
       - "c:\\n8n\\config"
       - "c:\\kube\\config"
+      - "C:\\Users\\louis\\.kube\\config"  # Your specific user directory
+      - "C:\\Users\\{{ ansible_user_id }}\\.kube\\config"  # Dynamic user directory
     python_requirements:
       - kubernetes
       - pyyaml
@@ -21,17 +23,9 @@
         extra_args: "--user"
       ignore_errors: yes
 
-    - name: Add environment-based kubeconfig paths
-      set_fact:
-        all_kubeconfig_paths: "{{ kubeconfig_paths + additional_paths }}"
-      vars:
-        additional_paths:
-          - "{{ ansible_env.USERPROFILE }}\\.kube\\config"  # Windows default location
-          - "{{ ansible_env.KUBECONFIG | default('') }}"  # Environment variable
-
     - name: Filter valid kubeconfig paths
       set_fact:
-        valid_kubeconfig_paths: "{{ all_kubeconfig_paths | select('defined') | reject('equalto', '') | list }}"
+        valid_kubeconfig_paths: "{{ kubeconfig_paths | select('defined') | reject('equalto', '') | list }}"
 
     - name: Check kubeconfig files
       stat:
