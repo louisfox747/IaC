@@ -23,12 +23,15 @@
         extra_args: "--user"
       ignore_errors: yes
 
+    - name: Filter valid kubeconfig paths
+      set_fact:
+        valid_kubeconfig_paths: "{{ kubeconfig_paths | select('defined') | reject('equalto', '') | list }}"
+
     - name: Check kubeconfig files
       stat:
         path: "{{ item }}"
       register: kubeconfig_stats
-      loop: "{{ kubeconfig_paths }}"
-      when: item is defined and item != ""
+      loop: "{{ valid_kubeconfig_paths }}"
 
     - name: Set kubeconfig path to first existing file
       set_fact:
@@ -43,7 +46,7 @@
 
     - name: Fail if no kubeconfig found
       fail:
-        msg: "Kubeconfig file not found in any of the specified paths: {{ kubeconfig_paths | join(', ') }}"
+        msg: "Kubeconfig file not found in any of the specified paths: {{ valid_kubeconfig_paths | join(', ') }}"
       when: kubeconfig_path is not defined
 
     - name: Generate Pod Resource Usage Report
