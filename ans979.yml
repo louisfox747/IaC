@@ -2,30 +2,107 @@
 - name: Kubernetes Pod Resource Usage Report
   hosts: localhost
   connection: local
-  gather_facts: false
-
+  gather_facts: no
   vars:
-    report_directory: "c:\n8n\reports"
+    kubeconfig_path: "c:\\n8n\\vke5.yaml"
+    python_requirements:
+      - kubernetes
+      - pyyaml
 
   tasks:
-    - name: Ensure reports directory exists
-      ansible.windows.win_file:
-        path: "{{ report_directory }}"
-        state: directory
+    - name: Install required Python packages
+      pip:
+        name: "{{ python_requirements }}"
+        state: present
+        extra_args: "--user"
+      ignore_errors: yes
 
-    - name: Run Kubernetes authentication script
-      script: c:\n8n\kube444_taskrunner.py
-      register: auth_result
+    - name: Check if kubeconfig exists
+      stat:
+        path: "{{ kubeconfig_path }}"
+      register: kubeconfig_stat
 
-    - name: Verify Kubernetes authentication
+    - name: Fail if kubeconfig not found
+      fail:
+        msg: "Kubeconfig file not found at {{ kubeconfig_path }}"
+      when: not kubeconfig_stat.stat.exists
+
+    - name: Generate Pod Resource Usage Report
+      script: |
+        #!/usr/bin/env python
+        import sys
+        import subprocess
+        import os
+        import site
+        import importlib
+        from datetime import datetime, timezone
+
+        def install_and_import_kubernetes():
+            try:
+                import kubernetes
+                from kubernetes import client, config
+                from kubernetes.client.rest import ApiException
+                return client, config, ApiException
+            except ImportError:
+                subprocess.check_call([sys.executable, "-m", "pip", "install", "--user", "kubernetes"])
+                importlib.invalidate_caches()
+                site.main()
+
+                import kubernetes
+                from kubernetes import client, config
+                from kubernetes.client.rest import ApiException
+                return client, config, ApiException
+
+        def convert_cpu_to_millicores(cpu_value):
+            if not cpu_value:
+                return 0
+            cpu_str = str(cpu_value)
+            if cpu_str.endswith('m'):
+                return int(cpu_str[:-1])
+            elif cpu_str.endswith('n'):
+                return int(cpu_str[:-1]) / 1000000
+            else:
+                return int(float(cpu_str) * 1000)
+
+        def convert_memory_to_mb(memory_value):
+            if not memory_value:
+                return 0
+            memory_str = str(memory_value)
+            if memory_str.endswith('Ki'):
+                return int(memory_str[:-2]) / 1024
+            elif memory_str.endswith('Mi'):
+                return int(memory_str[:-2])
+            elif memory_str.endswith('Gi'):
+                return int(memory_str[:-2]) * 1024
+            elif memory_str.endswith('Ti'):
+                return int(memory_str[:-2]) * 1024 * 1024
+            else:
+                return int(memory_str) / (1024 * 1024)
+
+        def main():
+            client, config, ApiException = install_and_import_kubernetes()
+            config.load_kube_config(config_file=r"c:\\n8n\\vke5.yaml")
+            core_v1 = client.CoreV1Api()
+            pods = core_v1.list_pod_for_all_namespaces(watch=False)
+            if not pods.items:
+                print("No pods available")
+            else:
+                for pod in pods.items:
+                    namespace = pod.metadata.namespace
+                    name = pod.metadata.name
+                    print(f"Pod: {name} in Namespace: {namespace}")
+
+        if __name__ == "__main__":
+            main()
+
+      register: pod_report
+
+    - name: Display Pod Resource Report
       debug:
-        msg: "Authentication result: {{ auth_result.stdout }}"
+        msg: "{{ pod_report.stdout_lines }}"
+      when: pod_report.stdout_lines is defined
 
-    - name: Execute custom script for gathering pod metrics
-      script: c:\n8n\custom_metrics_gatherer.py
-      register: metrics_result
-
-    - name: Display metrics results
+    - name: Display errors if any
       debug:
-        var: metrics_result.stdout_lines
-
+        msg: "{{ pod_report.stderr_lines }}"
+      when: pod_report.stderr_lines is defined and pod_report.stderr_lines|length > 0
