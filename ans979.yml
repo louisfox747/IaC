@@ -1,117 +1,31 @@
 ---
 - name: Kubernetes Pod Resource Usage Report
   hosts: localhost
-  gather_facts: yes
+  connection: local
+  gather_facts: false
+
   vars:
-    # Handle cross-platform paths
-    script_path: "{{ playbook_dir }}/ans979.py"
-    win_script_path: "c:\\n8n\\ans979.py"
-    # Use Windows path if running on Windows, otherwise use playbook_dir
-    final_script_path: "{{ win_script_path if ansible_os_family == 'Windows' else script_path }}"
-    
+    report_directory: "c:\n8n\reports"
+
   tasks:
-    - name: Check if ans979.py script exists in playbook directory
-      stat:
-        path: "{{ script_path }}"
-      register: script_stat
-      
-    - name: Check if ans979.py script exists in Windows location
-      stat:
-        path: "{{ win_script_path }}"
-      register: win_script_stat
-      when: ansible_os_family != 'Windows'
-      
-    - name: Copy script from Windows location if needed
-      copy:
-        src: "{{ win_script_path }}"
-        dest: "{{ script_path }}"
-        mode: '0755'
-      when: 
-        - ansible_os_family != 'Windows'
-        - not script_stat.stat.exists
-        - win_script_stat.stat.exists
-      
-    - name: Fail if script doesn't exist anywhere
-      fail:
-        msg: "Script ans979.py not found at {{ script_path }} or {{ win_script_path }}"
-      when: 
-        - not script_stat.stat.exists
-        - (ansible_os_family == 'Windows' or not win_script_stat.stat.exists)
-      
-    - name: Execute Kubernetes pod resource report
-      script: "{{ script_path }}"
-      register: k8s_report
-      changed_when: false
-      
-    - name: Parse JSON output
-      set_fact:
-        pod_report: "{{ k8s_report.stdout | from_json }}"
-        
-    - name: Display cluster summary
+    - name: Ensure reports directory exists
+      ansible.windows.win_file:
+        path: "{{ report_directory }}"
+        state: directory
+
+    - name: Run Kubernetes authentication script
+      script: c:\n8n\kube444_taskrunner.py
+      register: auth_result
+
+    - name: Verify Kubernetes authentication
       debug:
-        msg: |
-          Kubernetes Cluster Resource Summary:
-          ====================================
-          Total Pods: {{ pod_report.cluster_summary.total_pods }}
-          Running Pods: {{ pod_report.cluster_summary.running_pods }}
-          Pending Pods: {{ pod_report.cluster_summary.pending_pods }}
-          Succeeded Pods: {{ pod_report.cluster_summary.succeeded_pods }}
-          Failed Pods: {{ pod_report.cluster_summary.failed_pods }}
-          
-          Resource Requests:
-          - CPU: {{ pod_report.cluster_summary.total_cpu_requests_millicores }} mCPU ({{ (pod_report.cluster_summary.total_cpu_requests_millicores / 1000) | round(2) }} cores)
-          - Memory: {{ pod_report.cluster_summary.total_memory_requests_mb | round(0) }} MB ({{ (pod_report.cluster_summary.total_memory_requests_mb / 1024) | round(2) }} GB)
-          
-          Resource Limits:
-          - CPU: {{ pod_report.cluster_summary.total_cpu_limits_millicores }} mCPU ({{ (pod_report.cluster_summary.total_cpu_limits_millicores / 1000) | round(2) }} cores)
-          - Memory: {{ pod_report.cluster_summary.total_memory_limits_mb | round(0) }} MB ({{ (pod_report.cluster_summary.total_memory_limits_mb / 1024) | round(2) }} GB)
-          
-          {% if pod_report.cluster_summary.metrics_available %}
-          Current Usage:
-          - CPU: {{ pod_report.cluster_summary.total_cpu_usage_millicores }} mCPU ({{ (pod_report.cluster_summary.total_cpu_usage_millicores / 1000) | round(2) }} cores)
-          - Memory: {{ pod_report.cluster_summary.total_memory_usage_mb | round(0) }} MB ({{ (pod_report.cluster_summary.total_memory_usage_mb / 1024) | round(2) }} GB)
-          
-          Utilization:
-          - CPU: {{ pod_report.cluster_summary.cpu_utilization_percent | round(1) }}% of requests
-          - Memory: {{ pod_report.cluster_summary.memory_utilization_percent | round(1) }}% of requests
-          {% else %}
-          Current Usage: Metrics not available (metrics-server may not be installed)
-          {% endif %}
-          
-          Kubeconfig: {{ pod_report.cluster_summary.kubeconfig_path }}
-          
-    - name: Display pod details (first 10 pods)
+        msg: "Authentication result: {{ auth_result.stdout }}"
+
+    - name: Execute custom script for gathering pod metrics
+      script: c:\n8n\custom_metrics_gatherer.py
+      register: metrics_result
+
+    - name: Display metrics results
       debug:
-        msg: |
-          Pod: {{ item.namespace }}/{{ item.name }}
-          Status: {{ item.status }} (Age: {{ item.age }})
-          CPU Request: {{ item.cpu_request_millicores }} mCPU, Limit: {{ item.cpu_limit_millicores }} mCPU
-          Memory Request: {{ item.memory_request_mb | round(0) }} MB, Limit: {{ item.memory_limit_mb | round(0) }} MB
-          {% if item.metrics_available %}
-          Current Usage - CPU: {{ item.cpu_usage_millicores }} mCPU, Memory: {{ item.memory_usage_mb | round(0) }} MB
-          {% else %}
-          Current Usage: Metrics not available
-          {% endif %}
-      loop: "{{ pod_report.pod_data[:10] }}"
-      when: pod_report.pod_data | length > 0
-      
-    - name: Show total pod count if more than 10
-      debug:
-        msg: "... and {{ pod_report.pod_data | length - 10 }} more pods"
-      when: pod_report.pod_data | length > 10
-      
-    - name: Save detailed report to file
-      copy:
-        content: "{{ pod_report | to_nice_json }}"
-        dest: "{{ playbook_dir }}/k8s_pod_report.json"
-      when: pod_report.pod_data | length > 0
-      
-    - name: Report saved location
-      debug:
-        msg: "Detailed report saved to {{ playbook_dir }}/k8s_pod_report.json"
-      when: pod_report.pod_data | length > 0
-      
-    - name: Handle failure
-      fail:
-        msg: "{{ pod_report.msg }}"
-      when: pod_report.failed | default(false)
+        var: metrics_result.stdout_lines
+
