@@ -2,13 +2,11 @@
 - name: Kubernetes Pod Resource Usage Report
   hosts: localhost
   connection: local
-  gather_facts: no
+  gather_facts: yes
   vars:
     kubeconfig_paths:
       - "c:\\n8n\\vke5.yaml"
       - "c:\\kube\\config\\default.yaml"
-      - "{{ ansible_env.USERPROFILE }}\\.kube\\config"  # Windows default location
-      - "{{ ansible_env.KUBECONFIG }}"  # Environment variable
       - "c:\\n8n\\config"
       - "c:\\kube\\config"
     python_requirements:
@@ -23,9 +21,17 @@
         extra_args: "--user"
       ignore_errors: yes
 
+    - name: Add environment-based kubeconfig paths
+      set_fact:
+        all_kubeconfig_paths: "{{ kubeconfig_paths + additional_paths }}"
+      vars:
+        additional_paths:
+          - "{{ ansible_env.USERPROFILE }}\\.kube\\config"  # Windows default location
+          - "{{ ansible_env.KUBECONFIG | default('') }}"  # Environment variable
+
     - name: Filter valid kubeconfig paths
       set_fact:
-        valid_kubeconfig_paths: "{{ kubeconfig_paths | select('defined') | reject('equalto', '') | list }}"
+        valid_kubeconfig_paths: "{{ all_kubeconfig_paths | select('defined') | reject('equalto', '') | list }}"
 
     - name: Check kubeconfig files
       stat:
