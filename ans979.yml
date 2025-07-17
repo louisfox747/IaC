@@ -1,20 +1,42 @@
 ---
 - name: Kubernetes Pod Resource Usage Report
   hosts: localhost
-  gather_facts: no
+  gather_facts: yes
   vars:
+    # Handle cross-platform paths
     script_path: "{{ playbook_dir }}/ans979.py"
+    win_script_path: "c:\\n8n\\ans979.py"
+    # Use Windows path if running on Windows, otherwise use playbook_dir
+    final_script_path: "{{ win_script_path if ansible_os_family == 'Windows' else script_path }}"
     
   tasks:
-    - name: Check if ans979.py script exists
+    - name: Check if ans979.py script exists in playbook directory
       stat:
         path: "{{ script_path }}"
       register: script_stat
       
-    - name: Fail if script doesn't exist
+    - name: Check if ans979.py script exists in Windows location
+      stat:
+        path: "{{ win_script_path }}"
+      register: win_script_stat
+      when: ansible_os_family != 'Windows'
+      
+    - name: Copy script from Windows location if needed
+      copy:
+        src: "{{ win_script_path }}"
+        dest: "{{ script_path }}"
+        mode: '0755'
+      when: 
+        - ansible_os_family != 'Windows'
+        - not script_stat.stat.exists
+        - win_script_stat.stat.exists
+      
+    - name: Fail if script doesn't exist anywhere
       fail:
-        msg: "Script ans979.py not found at {{ script_path }}"
-      when: not script_stat.stat.exists
+        msg: "Script ans979.py not found at {{ script_path }} or {{ win_script_path }}"
+      when: 
+        - not script_stat.stat.exists
+        - (ansible_os_family == 'Windows' or not win_script_stat.stat.exists)
       
     - name: Execute Kubernetes pod resource report
       script: "{{ script_path }}"
