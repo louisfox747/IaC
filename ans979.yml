@@ -4,7 +4,13 @@
   connection: local
   gather_facts: no
   vars:
-    kubeconfig_path: "c:\\n8n\\vke5.yaml"
+    kubeconfig_paths:
+      - "c:\\n8n\\vke5.yaml"
+      - "c:\\kube\\config\\default.yaml"
+      - "{{ ansible_env.USERPROFILE }}\\.kube\\config"  # Windows default location
+      - "{{ ansible_env.KUBECONFIG }}"  # Environment variable
+      - "c:\\n8n\\config"
+      - "c:\\kube\\config"
     python_requirements:
       - kubernetes
       - pyyaml
@@ -17,15 +23,28 @@
         extra_args: "--user"
       ignore_errors: yes
 
-    - name: Check if kubeconfig exists
+    - name: Check kubeconfig files
       stat:
-        path: "{{ kubeconfig_path }}"
-      register: kubeconfig_stat
+        path: "{{ item }}"
+      register: kubeconfig_stats
+      loop: "{{ kubeconfig_paths }}"
+      when: item is defined and item != ""
 
-    - name: Fail if kubeconfig not found
+    - name: Set kubeconfig path to first existing file
+      set_fact:
+        kubeconfig_path: "{{ item.item }}"
+      when: item.stat.exists and kubeconfig_path is not defined
+      loop: "{{ kubeconfig_stats.results }}"
+
+    - name: Debug - Show found kubeconfig path
+      debug:
+        msg: "Using kubeconfig: {{ kubeconfig_path }}"
+      when: kubeconfig_path is defined
+
+    - name: Fail if no kubeconfig found
       fail:
-        msg: "Kubeconfig file not found at {{ kubeconfig_path }}"
-      when: not kubeconfig_stat.stat.exists
+        msg: "Kubeconfig file not found in any of the specified paths: {{ kubeconfig_paths | join(', ') }}"
+      when: kubeconfig_path is not defined
 
     - name: Generate Pod Resource Usage Report
       script: |
@@ -81,7 +100,7 @@
 
         def main():
             client, config, ApiException = install_and_import_kubernetes()
-            config.load_kube_config(config_file=r"c:\\n8n\\vke5.yaml")
+            config.load_kube_config(config_file=os.getenv('kubeconfig_path'))
             core_v1 = client.CoreV1Api()
             pods = core_v1.list_pod_for_all_namespaces(watch=False)
             if not pods.items:
@@ -95,6 +114,8 @@
         if __name__ == "__main__":
             main()
 
+      environment:
+        kubeconfig_path: "{{ kubeconfig_path }}"
       register: pod_report
 
     - name: Display Pod Resource Report
