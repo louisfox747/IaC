@@ -1,0 +1,37 @@
+---
+- name: Connect to Kubernetes Cluster
+  hosts: localhost
+  gather_facts: no
+
+  tasks:
+    - name: Set kubeconfig environment variable
+      set_fact:
+        kubeconfig_path: "{{ lookup('env', 'KUBECONFIG') or 'C:/Users/louis/.kube/config' }}"
+
+    - name: Ensure KUBECONFIG is accessible
+      stat:
+        path: "{{ kubeconfig_path }}"
+      register: KUBECONFIG
+
+    - name: Fail if kubeconfig not found
+      fail:
+        msg: "KUBECONFIG file not found, please ensure it exists at {{ kubeconfig_path }}"
+      when: not KUBECONFIG.stat.exists
+
+    - name: Display kubeconfig being used
+      debug:
+        msg: "Using KUBECONFIG located at {{ kubeconfig_path }}"
+
+    - name: Test Kubernetes connection
+      command: kubectl get nodes --kubeconfig "{{ kubeconfig_path }}"
+      register: kubectl_result
+      ignore_errors: yes
+
+    - name: Display Kubernetes connection result
+      debug:
+        msg: "Kubernetes connection result: {{ kubectl_result.stdout }}"
+
+    - name: Fail if unable to connect to Kubernetes
+      fail:
+        msg: "Unable to connect to Kubernetes cluster. Please check the kubeconfig and credentials."
+      when: kubectl_result.rc != 0
