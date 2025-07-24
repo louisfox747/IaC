@@ -1,0 +1,30 @@
+---
+- name: Test external internet access by pinging 8.8.8.8
+  hosts: localhost
+  connection: local
+  gather_facts: no
+  
+  tasks:
+    - name: Ping Google DNS (8.8.8.8) to test external internet connectivity
+      ping:
+        data: "ping test from ansible"
+      delegate_to: 8.8.8.8
+      register: ping_result
+      ignore_errors: yes
+      
+    - name: Display ping result
+      debug:
+        msg: "Ping to 8.8.8.8 {{ 'successful' if ping_result is succeeded else 'failed' }}"
+        
+    - name: Use shell command to ping 8.8.8.8 (alternative method)
+      shell: ping -c 4 8.8.8.8
+      register: shell_ping_result
+      ignore_errors: yes
+      
+    - name: Display shell ping result
+      debug:
+        var: shell_ping_result.stdout_lines
+        
+    - name: Check if internet access is working
+      debug:
+        msg: "Internet connectivity test completed. Check results above."
