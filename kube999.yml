@@ -1,9 +1,11 @@
 ---
 - name: Kubernetes Network Policies Report Generator
-  hosts: all
+  hosts: localhost
+  connection: local
   become: yes
   vars:
     kubeconfig_path: /root/.kube/config
+    vke6_config_path: /root/vke6.yaml
     report_path: /root/kube999_netpol_report.txt
     
   tasks:
@@ -87,14 +89,15 @@
         owner: root
         group: root
 
-    - name: Copy vke6.yaml to kubeconfig location
+    - name: Copy uploaded vke6.yaml to kubeconfig location
       copy:
-        src: vke6.yaml
+        src: "{{ vke6_config_path }}"
         dest: "{{ kubeconfig_path }}"
         mode: '0600'
         owner: root
         group: root
         backup: yes
+        remote_src: yes
 
     - name: Test kubectl connectivity
       command: kubectl get nodes
