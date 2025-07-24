@@ -1,0 +1,241 @@
+---
+- name: Kubernetes Network Policies Report Generator
+  hosts: all
+  become: yes
+  vars:
+    kubeconfig_path: /root/.kube/config
+    report_path: /root/kube999_netpol_report.txt
+    
+  tasks:
+    - name: Update package cache (Ubuntu/Debian)
+      apt:
+        update_cache: yes
+      when: ansible_os_family == "Debian"
+      
+    - name: Update package cache (CentOS/RHEL)
+      yum:
+        update_cache: yes
+      when: ansible_os_family == "RedHat"
+
+    - name: Install curl and apt-transport-https (Ubuntu/Debian)
+      apt:
+        name:
+          - curl
+          - apt-transport-https
+          - ca-certificates
+          - gnupg
+          - lsb-release
+        state: present
+      when: ansible_os_family == "Debian"
+
+    - name: Install curl (CentOS/RHEL)
+      yum:
+        name:
+          - curl
+          - ca-certificates
+        state: present
+      when: ansible_os_family == "RedHat"
+
+    - name: Install jq (Ubuntu/Debian)
+      apt:
+        name: jq
+        state: present
+      when: ansible_os_family == "Debian"
+
+    - name: Install jq (CentOS/RHEL)
+      yum:
+        name: jq
+        state: present
+      when: ansible_os_family == "RedHat"
+
+    - name: Download kubectl binary
+      get_url:
+        url: "https://dl.k8s.io/release/{{ kubectl_version | default('stable') }}/bin/linux/amd64/kubectl"
+        dest: /usr/local/bin/kubectl
+        mode: '0755'
+        owner: root
+        group: root
+      vars:
+        kubectl_version: "{{ kubectl_version | default('v1.28.0') }}"
+
+    - name: Get latest stable kubectl version if not specified
+      uri:
+        url: https://dl.k8s.io/release/stable.txt
+        return_content: yes
+      register: kubectl_stable_version
+      when: kubectl_version is not defined
+
+    - name: Download latest stable kubectl if version not specified
+      get_url:
+        url: "https://dl.k8s.io/release/{{ kubectl_stable_version.content.strip() }}/bin/linux/amd64/kubectl"
+        dest: /usr/local/bin/kubectl
+        mode: '0755'
+        owner: root
+        group: root
+      when: kubectl_version is not defined
+
+    - name: Verify kubectl installation
+      command: kubectl version --client
+      register: kubectl_version_output
+      changed_when: false
+
+    - name: Create .kube directory
+      file:
+        path: /root/.kube
+        state: directory
+        mode: '0755'
+        owner: root
+        group: root
+
+    - name: Copy vke6.yaml to kubeconfig location
+      copy:
+        src: vke6.yaml
+        dest: "{{ kubeconfig_path }}"
+        mode: '0600'
+        owner: root
+        group: root
+        backup: yes
+
+    - name: Test kubectl connectivity
+      command: kubectl get nodes
+      register: kubectl_test
+      changed_when: false
+      failed_when: false
+
+    - name: Get network policies in JSON format
+      command: kubectl get networkpolicies -A -o json
+      register: netpol_json
+      changed_when: false
+      environment:
+        KUBECONFIG: "{{ kubeconfig_path }}"
+
+    - name: Generate human-readable network policies report
+      shell: |
+        cat << 'EOF' > {{ report_path }}
+        # Kubernetes Network Policies Report
+        Generated on: $(date)
+        Cluster: $(kubectl config current-context 2>/dev/null || echo "Unknown")
+        
+        ## Summary
+        Total Network Policies Found: $(echo '{{ netpol_json.stdout }}' | jq '.items | length')
+        
+        ## Network Policies Details
+        
+        EOF
+        
+        echo '{{ netpol_json.stdout }}' | jq -r '
+        .items[] | 
+        "### Policy: " + .metadata.name + " (Namespace: " + .metadata.namespace + ")" + "\n" +
+        "**Created:** " + .metadata.creationTimestamp + "\n" +
+        (if .metadata.labels then "**Labels:** " + (.metadata.labels | to_entries | map(.key + "=" + .value) | join(", ")) + "\n" else "" end) +
+        "\n**Pod Selector:**\n" +
+        (if .spec.podSelector.matchLabels then 
+          (.spec.podSelector.matchLabels | to_entries | map("- " + .key + ": " + .value) | join("\n")) + "\n"
+        else 
+          "- All pods in namespace\n" 
+        end) +
+        "\n**Policy Types:** " + (.spec.policyTypes | join(", ")) + "\n" +
+        (if .spec.ingress then 
+          "\n**Ingress Rules:**\n" + 
+          (.spec.ingress | to_entries | map(
+            "- Rule " + (.key + 1 | tostring) + ":\n" +
+            (if .value.from then 
+              "  - From:\n" + 
+              (.value.from | map(
+                (if .podSelector then "    - Pod Selector: " + (.podSelector.matchLabels // {} | to_entries | map(.key + "=" + .value) | join(", ")) else "" end) +
+                (if .namespaceSelector then "    - Namespace Selector: " + (.namespaceSelector.matchLabels // {} | to_entries | map(.key + "=" + .value) | join(", ")) else "" end) +
+                (if .ipBlock then "    - IP Block: " + .ipBlock.cidr + (if .ipBlock.except then " (except: " + (.ipBlock.except | join(", ")) + ")" else "" end) else "" end)
+              ) | join("\n"))
+            else 
+              "  - From: All sources" 
+            end) + "\n" +
+            (if .value.ports then 
+              "  - Ports:\n" + 
+              (.value.ports | map("    - " + (.protocol // "TCP") + "/" + (.port | tostring)) | join("\n"))
+            else 
+              "  - Ports: All ports" 
+            end)
+          ) | join("\n")) + "\n"
+        else 
+          ""
+        end) +
+        (if .spec.egress then 
+          "\n**Egress Rules:**\n" + 
+          (.spec.egress | to_entries | map(
+            "- Rule " + (.key + 1 | tostring) + ":\n" +
+            (if .value.to then 
+              "  - To:\n" + 
+              (.value.to | map(
+                (if .podSelector then "    - Pod Selector: " + (.podSelector.matchLabels // {} | to_entries | map(.key + "=" + .value) | join(", ")) else "" end) +
+                (if .namespaceSelector then "    - Namespace Selector: " + (.namespaceSelector.matchLabels // {} | to_entries | map(.key + "=" + .value) | join(", ")) else "" end) +
+                (if .ipBlock then "    - IP Block: " + .ipBlock.cidr + (if .ipBlock.except then " (except: " + (.ipBlock.except | join(", ")) + ")" else "" end) else "" end)
+              ) | join("\n"))
+            else 
+              "  - To: All destinations" 
+            end) + "\n" +
+            (if .value.ports then 
+              "  - Ports:\n" + 
+              (.value.ports | map("    - " + (.protocol // "TCP") + "/" + (.port | tostring)) | join("\n"))
+            else 
+              "  - Ports: All ports" 
+            end)
+          ) | join("\n")) + "\n"
+        else 
+          ""
+        end) +
+        "\n---\n"
+        ' >> {{ report_path }}
+        
+        # Add summary statistics at the end
+        cat << 'EOF' >> {{ report_path }}
+        
+        ## Statistics
+        
+        EOF
+        
+        echo '{{ netpol_json.stdout }}' | jq -r '
+        "**Policies by Namespace:**" as $header |
+        (.items | group_by(.metadata.namespace) | map({namespace: .[0].metadata.namespace, count: length}) | sort_by(.namespace) | map("- " + .namespace + ": " + (.count | tostring) + " policies") | join("\n")) as $by_ns |
+        
+        "**Policies by Type:**" as $type_header |
+        (.items | map(.spec.policyTypes[]) | group_by(.) | map({type: .[0], count: length}) | sort_by(.type) | map("- " + .type + ": " + (.count | tostring) + " policies") | join("\n")) as $by_type |
+        
+        $header + "\n" + $by_ns + "\n\n" + $type_header + "\n" + $by_type
+        ' >> {{ report_path }}
+      args:
+        executable: /bin/bash
+      environment:
+        KUBECONFIG: "{{ kubeconfig_path }}"
+      register: report_generation
+
+    - name: Read the generated report
+      slurp:
+        src: "{{ report_path }}"
+      register: generated_report
+
+    - name: Display report content
+      debug:
+        msg: "{{ generated_report.content | b64decode }}"
+
+    - name: Display report file location
+      debug:
+        msg: "Network policies report has been written to {{ report_path }}"
+
+    - name: Verify report file exists and show file info
+      stat:
+        path: "{{ report_path }}"
+      register: report_file_stat
+
+    - name: Display report file statistics
+      debug:
+        msg: 
+          - "Report file exists: {{ report_file_stat.stat.exists }}"
+          - "Report file size: {{ report_file_stat.stat.size }} bytes"
+          - "Report file path: {{ report_path }}"
+          - "Last modified: {{ report_file_stat.stat.mtime | int | to_datetime }}"
+
+    - name: Show kubectl and jq versions for verification
+      debug:
+        msg:
+          - "kubectl version: {{ kubectl_version_output.stdout }}"
+          - "jq version: {{ ansible_facts['packages']['jq'][0]['version'] if 'jq' in ansible_facts['packages'] else 'Version check failed' }}"
